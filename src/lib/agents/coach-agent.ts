@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import type { AnalysisWeakness } from "./analysis-agent";
 
 export type CoachContext = {
   system: string;
@@ -38,7 +39,9 @@ export async function buildCoachContext(
   }
 
   if (latestReport) {
-    const weaknesses = (latestReport.weaknessesJson as string[]).join(", ");
+    const weaknesses = (latestReport.weaknessesJson as AnalysisWeakness[])
+      .map((w) => `${w.title} (priorité ${w.priority})`)
+      .join(", ");
     systemParts.push(
       `Son dernier diagnostic : score ${latestReport.globalScore}/100, niveau ${latestReport.level}. Points faibles identifiés : ${weaknesses}.`
     );

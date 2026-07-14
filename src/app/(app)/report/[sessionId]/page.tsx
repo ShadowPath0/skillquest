@@ -8,6 +8,13 @@ import { Button } from "@/components/ui/button";
 import { SkillRadarChart } from "@/components/report/skill-radar-chart";
 import { generateProgram } from "@/lib/plan/actions";
 import { CelebrationEffects } from "@/components/gamification/celebration-effects";
+import type { AnalysisStrength, AnalysisWeakness } from "@/lib/agents/analysis-agent";
+
+const PRIORITY_BADGE_VARIANT: Record<AnalysisWeakness["priority"], "destructive" | "default" | "secondary"> = {
+  critique: "destructive",
+  important: "default",
+  mineur: "secondary",
+};
 
 const LEVEL_LABELS: Record<string, string> = {
   BEGINNER: "Débutant",
@@ -47,8 +54,8 @@ export default async function ReportPage({
   }
 
   const radar = report.radarJson as Record<string, number>;
-  const strengths = report.strengthsJson as string[];
-  const weaknesses = report.weaknessesJson as string[];
+  const strengths = report.strengthsJson as AnalysisStrength[];
+  const weaknesses = report.weaknessesJson as AnalysisWeakness[];
   const goal = report.testSession.goal;
 
   const radarData = Object.entries(radar).map(([skill, score]) => ({ skill, score }));
@@ -139,36 +146,42 @@ export default async function ReportPage({
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-emerald-500">Forces</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="flex flex-col gap-2">
-              {strengths.map((s) => (
-                <li key={s} className="text-sm">
-                  {s}
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-destructive">Points à travailler</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="flex flex-col gap-2">
-              {weaknesses.map((w) => (
-                <li key={w} className="text-sm">
-                  {w}
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-emerald-500">Forces</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ul className="flex flex-col gap-3">
+            {strengths.map((s) => (
+              <li key={s.title} className="text-sm">
+                <span className="font-medium">{s.title}</span>
+                <p className="text-muted-foreground">{s.explanation}</p>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-destructive">Points à travailler</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          {weaknesses.map((w) => (
+            <div key={w.title} className="flex flex-col gap-1.5 rounded-lg border border-border/60 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">{w.title}</span>
+                <Badge variant={PRIORITY_BADGE_VARIANT[w.priority]}>{w.priority}</Badge>
+              </div>
+              <p className="text-sm text-muted-foreground">{w.explanation}</p>
+              <p className="text-sm">
+                <span className="font-medium">Bonne approche : </span>
+                {w.correctApproach}
+              </p>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

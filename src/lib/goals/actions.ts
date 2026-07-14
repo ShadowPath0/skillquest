@@ -60,3 +60,34 @@ export async function submitFreeformDomain(formData: FormData) {
   revalidatePath("/domains");
   redirect("/domains");
 }
+
+export async function deleteGoal(formData: FormData) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
+  const goalId = String(formData.get("goalId") ?? "");
+  const goal = await prisma.userGoal.findUnique({ where: { id: goalId } });
+
+  if (!goal || goal.userId !== user.id) {
+    redirect("/domains");
+  }
+
+  // WeeklyProgram references AiReport (via basedOnReportId), and AiReport cascades
+  // from TestSession — programs must go first or the AiReport delete would violate
+  // that foreign key.
+  await prisma.$transaction([
+    prisma.weeklyProgram.deleteMany({ where: { goalId } }),
+    prisma.testSession.deleteMany({ where: { goalId } }),
+    prisma.userGoal.delete({ where: { id: goalId } }),
+  ]);
+
+  revalidatePath("/domains");
+  revalidatePath("/dashboard");
+  redirect("/domains");
+}

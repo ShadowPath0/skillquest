@@ -50,16 +50,17 @@ export async function generateQuestionPool({
       schema: GeneratedQuestionPool,
       toolName: "question_pool",
       system:
-        "Tu es l'agent Évaluation de SkillQuest. Tu génères des questions de test de niveau variées, précises et sans ambiguïté, destinées à un test de placement adaptatif. Réponds uniquement en français.",
+        "Tu es l'agent Évaluation de SkillQuest, un expert du domaine testé qui rédige des questions au niveau d'un examen professionnel ou d'une certification métier : précises, sans ambiguïté, et ancrées dans des situations réelles plutôt que des généralités théoriques. Réponds uniquement en français.",
       user: `Génère ${count} questions de test de niveau pour le domaine "${domainName}" / sous-domaine "${subdomainName}", pour un utilisateur visant l'objectif "${goalTitle}".
 Varie les 6 types de questions et répartis les difficultés de 1 (débutant) à 5 (expert) sur toute l'échelle.
-Pour les QCM (type MCQ) : fournis exactement 4 choix dans "choices", dont un seul correct ; "correctAnswer" doit être le texte exact du choix correct.
+Pour les QCM (type MCQ) : fournis exactement 4 choix dans "choices", dont un seul correct ; "correctAnswer" doit être le texte exact du choix correct. Les distracteurs doivent être plausibles (des erreurs fréquentes réelles), pas absurdes.
 Pour vrai/faux (type TRUE_FALSE) : "choices" doit être ["Vrai","Faux"] et "correctAnswer" l'un des deux.
-Pour les questions ouvertes (type OPEN) : "choices" doit être null et "correctAnswer" doit décrire une réponse de référence servant à la correction IA.
+Pour les questions ouvertes (type OPEN) : "choices" doit être null et "correctAnswer" doit décrire une réponse de référence précise et complète servant à la correction IA.
 Pour les exercices pratiques (type PRACTICAL) : "promptMd" décrit une tâche concrète à réaliser (ex. "Écris une fonction qui..."), "choices" doit être null et "correctAnswer" décrit une solution de référence.
-Pour les études de cas (type CASE_STUDY) : "promptMd" présente une mise en situation détaillée suivie d'une question d'analyse, "choices" doit être null et "correctAnswer" décrit les points clés attendus dans la réponse.
-Pour les mises en situation (type SCENARIO) : "promptMd" décrit un scénario avec un choix ou un jugement à faire, "choices" doit être null et "correctAnswer" décrit la démarche ou décision attendue.
-Chaque question doit avoir 1 à 3 "skillTags" courts et cohérents entre eux (ex. "Hooks", "Gestion d'état").`,
+Pour les études de cas (type CASE_STUDY) : "promptMd" présente une mise en situation détaillée et réaliste (avec des détails concrets, pas un cas abstrait) suivie d'une question d'analyse, "choices" doit être null et "correctAnswer" décrit les points clés attendus dans la réponse.
+Pour les mises en situation (type SCENARIO) : "promptMd" décrit un scénario concret avec un choix ou un jugement à faire, "choices" doit être null et "correctAnswer" décrit la démarche ou décision attendue et pourquoi.
+Chaque question doit avoir 1 à 3 "skillTags" courts et cohérents entre eux (ex. "Hooks", "Gestion d'état").
+Évite les questions vagues ou purement définitionnelles ("Qu'est-ce que X ?") sauf aux difficultés 1-2 : aux difficultés 3-5, teste l'application, l'analyse d'un cas, ou la distinction entre deux notions proches souvent confondues.`,
       maxTokens: 8192,
     });
 
@@ -193,7 +194,7 @@ export async function gradeOpenAnswer({
     schema: OpenAnswerGrading,
     toolName: "open_answer_grading",
     system:
-      "Tu es l'agent Évaluation de SkillQuest. Tu corriges une réponse ouverte à une question de test en comparant avec la réponse de référence, avec bienveillance mais rigueur. Réponds uniquement en français.",
-    user: `Question : ${promptMd}\n\nRéponse de référence : ${referenceAnswer}\n\nRéponse de l'utilisateur : ${userAnswer}\n\nÉvalue si la réponse de l'utilisateur est correcte (isCorrect), donne un score entre 0 et 1 (score), et une explication courte (feedbackMd) qui indique ce qui est juste ou manquant.`,
+      "Tu es l'agent Évaluation de SkillQuest, un expert du domaine qui corrige avec la rigueur d'un formateur senior : précis, factuel, sans complaisance mais bienveillant. Réponds uniquement en français.",
+    user: `Question : ${promptMd}\n\nRéponse de référence : ${referenceAnswer}\n\nRéponse de l'utilisateur : ${userAnswer}\n\nÉvalue si la réponse de l'utilisateur est correcte (isCorrect) et donne un score entre 0 et 1 (score) reflétant la justesse et la complétude.\n\nDans feedbackMd (3 à 5 phrases) : si la réponse est fausse ou incomplète, explique précisément ce qui est erroné ou manquant, donne la réponse correcte en expliquant son raisonnement (pas juste l'énoncer), et si c'est pertinent pourquoi ça compte en pratique. Si la réponse est juste, confirme-le brièvement et complète si un point utile manque.`,
   });
 }

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { generateStructured } from "./client";
 import { prisma } from "@/lib/prisma";
 import { generateResourcesForSkills } from "./generator-agent";
+import type { AnalysisWeakness } from "./analysis-agent";
 
 const DailyMissionSchema = z.object({
   dayNumber: z.number().int().min(1).max(5),
@@ -26,8 +27,8 @@ const PlanSchema = z.object({
 
 type PlanWeek = z.infer<typeof WeekSchema>;
 
-function buildFallbackPlan(weaknesses: string[], goalTitle: string): PlanWeek[] {
-  const focusSkills = weaknesses.length > 0 ? weaknesses : ["Bases générales"];
+function buildFallbackPlan(weaknessTitles: string[], goalTitle: string): PlanWeek[] {
+  const focusSkills = weaknessTitles.length > 0 ? weaknessTitles : ["Bases générales"];
   const weeks: PlanWeek[] = [];
 
   for (let w = 1; w <= 6; w++) {
@@ -69,21 +70,46 @@ export async function generateWeeklyProgram(goalId: string, aiReportId: string) 
   ]);
 
   const goalTitle = goal.goalTemplate?.title ?? goal.customTitle ?? "Progresser";
-  const weaknesses = report.weaknessesJson as string[];
+  const weaknesses = report.weaknessesJson as AnalysisWeakness[];
 
-  let weeks = buildFallbackPlan(weaknesses, goalTitle);
+  let weeks = buildFallbackPlan(
+    weaknesses.map((w) => w.title),
+    goalTitle
+  );
 
   try {
+    const priorityRank: Record<AnalysisWeakness["priority"], number> = {
+      critique: 0,
+      important: 1,
+      mineur: 2,
+    };
+    const weaknessesDetail = [...weaknesses]
+      .sort((a, b) => priorityRank[a.priority] - priorityRank[b.priority])
+      .map(
+        (w) =>
+          `- [${w.priority}] ${w.title} : ${w.explanation} Bonne approche attendue : ${w.correctApproach}`
+      )
+      .join("\n");
+
     const parsed = await generateStructured({
       schema: PlanSchema,
       toolName: "weekly_program",
       system:
-        "Tu es l'agent Planificateur de SkillQuest. Tu construis un programme de 6 semaines, concret et progressif, pour aider un utilisateur à progresser vers son objectif. Réponds uniquement en français.",
+        "Tu es l'agent Planificateur de SkillQuest, un formateur senior qui construit un programme de 6 semaines concret et progressif pour combler des lacunes précises identifiées lors d'un diagnostic. Réponds uniquement en français.",
       user: `Objectif : "${goalTitle}" (${goal.domain.name} / ${goal.subdomain.name}).
 Niveau actuel : ${report.level} (score ${report.globalScore}/100).
-Points faibles à travailler en priorité : ${weaknesses.join(", ")}.
 
-Génère un programme de 6 semaines (weeks), chacune avec : 2 à 5 objectifs (objectives), 1 à 5 compétences travaillées (skills), un volume horaire estimé (estimatedHours, en heures), une difficulté (difficulty, 1 à 5), et 3 à 5 missions journalières (missions) avec un titre, une description courte, une récompense en XP (xpReward, 50 à 500) et 2 à 6 tâches concrètes (tasks). La difficulté doit progresser globalement sur les 6 semaines, en priorisant d'abord les points faibles identifiés.`,
+Points faibles identifiés, par priorité décroissante :
+${weaknessesDetail || "Aucun point faible précis identifié."}
+
+Construis un programme de 6 semaines (weeks) qui suit cet arc :
+- Semaines 1-2 : consolidation, en traitant en priorité les points faibles marqués "critique" puis "important".
+- Semaines 3-5 : approfondissement et spécialisation sur les points faibles restants et les compétences avancées de l'objectif.
+- Semaine 6 : synthèse et mise en situation complexe qui mobilise plusieurs compétences travaillées (équivalent d'un entretien technique ou d'un cas de synthèse), pas de nouvelle notion.
+
+Pour chaque semaine : 2 à 5 objectifs (objectives), 1 à 5 compétences travaillées (skills), un volume horaire estimé (estimatedHours), une difficulté (difficulty, 1 à 5, progressant globalement sur les 6 semaines), et 3 à 5 missions journalières (missions) avec un titre, une description, une récompense en XP (xpReward, 50 à 500) et 2 à 6 tâches concrètes (tasks).
+
+Contrainte importante : chaque semaine doit inclure au moins une mission qui est un exercice pratique substantiel (un cas concret à traiter, pas de la lecture passive), directement lié à un des points faibles listés ci-dessus plutôt qu'une répétition générique. Dans "description" de cette mission, précise explicitement que le résultat est à soumettre au Coach IA pour correction détaillée.`,
       maxTokens: 8192,
     });
 

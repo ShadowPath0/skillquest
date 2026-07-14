@@ -3,8 +3,9 @@ import type { z } from "zod";
 export const CLAUDE_API_URL = process.env.CLAUDE_API_URL;
 export const CLAUDE_API_TOKEN = process.env.CLAUDE_API_TOKEN;
 
-// Slightly above the VM wrapper's own 60s internal timeout so we see its real error first.
+// Slightly above the VM wrapper's own internal timeout so we see its real error first.
 const DEFAULT_TIMEOUT_MS = 65_000;
+const MAX_TIMEOUT_MS = 220_000;
 const STRUCTURED_MAX_TOKENS = 4096;
 
 export async function callClaudeApi(prompt: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<string> {
@@ -84,7 +85,10 @@ ${JSON.stringify(jsonSchema)}
 
 Ta réponse ne doit pas dépasser environ ${approxMaxChars} caractères.`;
 
-  const raw = await callClaudeApi(prompt);
+  // Le wrapper CLI est lent (démarrage à froid + débit d'abonnement) : une grosse
+  // génération structurée peut prendre bien plus que le timeout par défaut.
+  const timeoutMs = Math.min(MAX_TIMEOUT_MS, Math.max(DEFAULT_TIMEOUT_MS, maxTokens * 20));
+  const raw = await callClaudeApi(prompt, timeoutMs);
   const jsonText = extractJsonPayload(raw);
 
   let parsedRaw: unknown;

@@ -9,6 +9,7 @@ import { submitFreeformDomain } from "@/lib/goals/actions";
 import { QuestPromptForm } from "@/components/quest/quest-prompt-form";
 import { getDomainIcon } from "@/lib/domain-icons";
 import { SubmitButton } from "@/components/quest/submit-button";
+import { DeleteGoalButton } from "@/components/quest/delete-goal-button";
 
 export default async function DomainsPage({
   searchParams,
@@ -54,6 +55,7 @@ export default async function DomainsPage({
             {activeGoals.map((goal) => {
               const latestSession = goal.testSessions[0];
               const Icon = getDomainIcon(goal.domain.icon);
+              const goalTitle = goal.goalTemplate?.title ?? goal.customTitle ?? "Quête";
               return (
                 <Card key={goal.id}>
                   <CardContent className="flex items-center justify-between gap-4">
@@ -62,28 +64,29 @@ export default async function DomainsPage({
                         <Icon className="size-4" />
                       </span>
                       <div className="flex flex-col">
-                        <span className="font-medium">
-                          {goal.goalTemplate?.title ?? goal.customTitle}
-                        </span>
+                        <span className="font-medium">{goalTitle}</span>
                         <span className="text-sm text-muted-foreground">
                           {goal.domain.name} · {goal.subdomain.name}
                         </span>
                       </div>
                     </div>
-                    {latestSession?.status === "IN_PROGRESS" ? (
-                      <Button render={<Link href={`/test/${latestSession.id}`} />} nativeButton={false} size="sm">
-                        Reprendre le test
-                      </Button>
-                    ) : latestSession?.status === "COMPLETED" ? (
-                      <Badge variant="secondary">Test terminé</Badge>
-                    ) : (
-                      <form action={startTest}>
-                        <input type="hidden" name="goalId" value={goal.id} />
-                        <SubmitButton size="sm" pendingText="Le Grimoire tisse ton épreuve...">
-                          Commencer le test
-                        </SubmitButton>
-                      </form>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {latestSession?.status === "IN_PROGRESS" ? (
+                        <Button render={<Link href={`/test/${latestSession.id}`} />} nativeButton={false} size="sm">
+                          Reprendre le test
+                        </Button>
+                      ) : latestSession?.status === "COMPLETED" ? (
+                        <Badge variant="secondary">Test terminé</Badge>
+                      ) : (
+                        <form action={startTest}>
+                          <input type="hidden" name="goalId" value={goal.id} />
+                          <SubmitButton size="sm" pendingText="Le Grimoire tisse ton épreuve...">
+                            Commencer le test
+                          </SubmitButton>
+                        </form>
+                      )}
+                      <DeleteGoalButton goalId={goal.id} goalTitle={goalTitle} />
+                    </div>
                   </CardContent>
                 </Card>
               );
