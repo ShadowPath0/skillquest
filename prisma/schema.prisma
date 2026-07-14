@@ -1,0 +1,385 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------- Identity & taxonomy ----------
+
+model Profile {
+  id             String   @id // Supabase auth uid
+  email          String   @unique
+  displayName    String
+  avatarUrl      String?
+  avatarEmblem   String?
+  unlockedEmblems String[] @default([])
+  unlockedTitles String[] @default([])
+  equippedTitle  String?
+  xpTotal        Int      @default(0)
+  currentLevel   Int      @default(1)
+  coins          Int      @default(0)
+  crystals       Int      @default(0)
+  currentStreak  Int      @default(0)
+  longestStreak  Int      @default(0)
+  lastActivityAt DateTime?
+  createdAt      DateTime @default(now())
+
+  goals               UserGoal[]
+  testSessions        TestSession[]
+  skillCompetencies   SkillCompetency[]
+  aiReports           AiReport[]
+  weeklyPrograms       WeeklyProgram[]
+  xpEvents            XpEvent[]
+  badges              UserBadge[]
+  coachConversations  CoachConversation[]
+}
+
+model Domain {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String
+  icon        String
+  color       String
+
+  subdomains Subdomain[]
+  questions  Question[]
+  goals      UserGoal[]
+  testSessions TestSession[]
+  skillCompetencies SkillCompetency[]
+  coachConversations CoachConversation[]
+  resources  Resource[]
+}
+
+model Subdomain {
+  id       String @id @default(cuid())
+  domainId String
+  slug     String
+  name     String
+
+  domain        Domain         @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  goalTemplates GoalTemplate[]
+  questions     Question[]
+  userGoals     UserGoal[]
+
+  @@unique([domainId, slug])
+}
+
+model GoalTemplate {
+  id          String @id @default(cuid())
+  subdomainId String
+  title       String
+  description String
+
+  subdomain Subdomain  @relation(fields: [subdomainId], references: [id], onDelete: Cascade)
+  userGoals UserGoal[]
+}
+
+enum GoalStatus {
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+model UserGoal {
+  id             String     @id @default(cuid())
+  userId         String
+  domainId       String
+  subdomainId    String
+  goalTemplateId String?
+  customTitle    String?
+  status         GoalStatus @default(ACTIVE)
+  createdAt      DateTime   @default(now())
+
+  user           Profile       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domain         Domain        @relation(fields: [domainId], references: [id])
+  subdomain      Subdomain     @relation(fields: [subdomainId], references: [id])
+  goalTemplate   GoalTemplate? @relation(fields: [goalTemplateId], references: [id])
+  testSessions   TestSession[]
+  weeklyPrograms WeeklyProgram[]
+}
+
+// ---------- Testing ----------
+
+enum QuestionType {
+  MCQ
+  TRUE_FALSE
+  OPEN
+  PRACTICAL
+  CASE_STUDY
+  SCENARIO
+}
+
+model Question {
+  id               String       @id @default(cuid())
+  domainId         String
+  subdomainId      String
+  type             QuestionType
+  difficulty       Float
+  promptMd         String
+  choicesJson      Json?
+  correctAnswerJson Json
+  explanationMd    String
+  skillTags        String[]
+  estimatedTimeSec Int
+  aiGenerated      Boolean      @default(true)
+  createdAt        DateTime     @default(now())
+
+  domain    Domain    @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  subdomain Subdomain @relation(fields: [subdomainId], references: [id], onDelete: Cascade)
+  answers   Answer[]
+
+  @@index([domainId, subdomainId, difficulty])
+}
+
+enum TestSessionKind {
+  PLACEMENT
+  FINAL_EXAM
+  PRACTICE
+}
+
+enum TestSessionStatus {
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+}
+
+model TestSession {
+  id                String             @id @default(cuid())
+  userId            String
+  domainId          String
+  goalId            String
+  kind              TestSessionKind    @default(PLACEMENT)
+  status            TestSessionStatus  @default(IN_PROGRESS)
+  currentDifficulty Float              @default(2.5)
+  startedAt         DateTime           @default(now())
+  completedAt       DateTime?
+  globalScore       Float?
+  level             String?
+
+  user     Profile   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domain   Domain    @relation(fields: [domainId], references: [id])
+  goal     UserGoal  @relation(fields: [goalId], references: [id])
+  answers  Answer[]
+  aiReport AiReport?
+}
+
+model Answer {
+  id               String   @id @default(cuid())
+  testSessionId    String
+  questionId       String
+  userAnswerJson   Json
+  isCorrect        Boolean
+  score            Float
+  timeSpentSec     Int
+  difficultyAtTime Float
+  sequenceIndex    Int
+  aiGradingJson    Json?
+  createdAt        DateTime @default(now())
+
+  testSession TestSession @relation(fields: [testSessionId], references: [id], onDelete: Cascade)
+  question    Question    @relation(fields: [questionId], references: [id])
+
+  @@index([testSessionId])
+}
+
+// ---------- Skills & reporting ----------
+
+model SkillCompetency {
+  id        String   @id @default(cuid())
+  userId    String
+  domainId  String
+  skillName String
+  score     Float
+  updatedAt DateTime @updatedAt
+
+  user   Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domain Domain  @relation(fields: [domainId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, domainId, skillName])
+}
+
+enum SkillLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+model AiReport {
+  id            String     @id @default(cuid())
+  testSessionId String     @unique
+  userId        String
+  globalScore   Float
+  level         SkillLevel
+  radarJson     Json
+  strengthsJson Json
+  weaknessesJson Json
+  explanationMd String
+  createdAt     DateTime   @default(now())
+
+  testSession    TestSession     @relation(fields: [testSessionId], references: [id], onDelete: Cascade)
+  user           Profile         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  weeklyPrograms WeeklyProgram[]
+}
+
+// ---------- Weekly program ----------
+
+enum ProgramStatus {
+  ACTIVE
+  COMPLETED
+  ABANDONED
+}
+
+model WeeklyProgram {
+  id             String        @id @default(cuid())
+  userId         String
+  goalId         String
+  basedOnReportId String
+  status         ProgramStatus @default(ACTIVE)
+  startDate      DateTime      @default(now())
+  durationWeeks  Int           @default(6)
+
+  user         Profile      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal         UserGoal     @relation(fields: [goalId], references: [id])
+  basedOnReport AiReport    @relation(fields: [basedOnReportId], references: [id])
+  weeks        ProgramWeek[]
+}
+
+model ProgramWeek {
+  id            String   @id @default(cuid())
+  programId     String
+  weekNumber    Int
+  objectivesJson Json
+  skillsJson    Json
+  estimatedHours Float
+  difficulty    Float
+  progressPct   Float    @default(0)
+  status        String   @default("pending")
+
+  program  WeeklyProgram  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  missions DailyMission[]
+
+  @@unique([programId, weekNumber])
+}
+
+model DailyMission {
+  id            String    @id @default(cuid())
+  programWeekId String
+  dayNumber     Int
+  title         String
+  description   String
+  xpReward      Int
+  tasksJson     Json
+  status        String    @default("pending")
+  completedAt   DateTime?
+
+  programWeek ProgramWeek @relation(fields: [programWeekId], references: [id], onDelete: Cascade)
+
+  @@index([programWeekId])
+}
+
+model Resource {
+  id          String   @id @default(cuid())
+  domainId    String
+  skillTag    String
+  title       String
+  contentMd   String
+  aiGenerated Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  domain Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)
+
+  @@unique([domainId, skillTag])
+}
+
+// ---------- Gamification ----------
+
+model XpEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  amount    Int
+  reason    String
+  sourceType String
+  sourceId  String?
+  createdAt DateTime @default(now())
+
+  user Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model LevelThreshold {
+  level      Int    @id
+  xpRequired Int
+  title      String
+}
+
+enum BadgeCategory {
+  ACHIEVEMENT
+  STREAK
+  SKILL
+  MILESTONE
+}
+
+model Badge {
+  id           String        @id @default(cuid())
+  slug         String        @unique
+  name         String
+  description  String
+  iconUrl      String
+  criteriaJson Json
+  category     BadgeCategory
+  unlocksTitle String?
+
+  users UserBadge[]
+}
+
+model UserBadge {
+  id       String   @id @default(cuid())
+  userId   String
+  badgeId  String
+  earnedAt DateTime @default(now())
+
+  user  Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge Badge   @relation(fields: [badgeId], references: [id])
+
+  @@unique([userId, badgeId])
+}
+
+// ---------- AI Coach ----------
+
+model CoachConversation {
+  id        String   @id @default(cuid())
+  userId    String
+  domainId  String?
+  title     String
+  createdAt DateTime @default(now())
+
+  user     Profile        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domain   Domain?        @relation(fields: [domainId], references: [id])
+  messages CoachMessage[]
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+model CoachMessage {
+  id             String      @id @default(cuid())
+  conversationId String
+  role           MessageRole
+  content        String
+  tokensUsed     Int?
+  createdAt      DateTime    @default(now())
+
+  conversation CoachConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+}

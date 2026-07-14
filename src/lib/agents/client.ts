@@ -1,0 +1,102 @@
+import type { z } from "zod";
+
+export const CLAUDE_API_URL = process.env.CLAUDE_API_URL;
+export const CLAUDE_API_TOKEN = process.env.CLAUDE_API_TOKEN;
+
+// Slightly above the VM wrapper's own 60s internal timeout so we see its real error first.
+const DEFAULT_TIMEOUT_MS = 65_000;
+const STRUCTURED_MAX_TOKENS = 4096;
+
+export async function callClaudeApi(prompt: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<string> {
+  if (!CLAUDE_API_URL || !CLAUDE_API_TOKEN) {
+    throw new Error("CLAUDE_API_URL / CLAUDE_API_TOKEN non configurés.");
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(`${CLAUDE_API_URL.replace(/\/$/, "")}/prompt`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${CLAUDE_API_TOKEN}`,
+      },
+      body: JSON.stringify({ prompt }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      throw new Error(`L'API Claude a répondu ${res.status}.`);
+    }
+
+    const data = (await res.json()) as { response?: string };
+    if (typeof data.response !== "string") {
+      throw new Error("Réponse de l'API Claude invalide.");
+    }
+    return data.response;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Le wrapper VM ne fait que passer le texte à `claude -p` : il n'y a pas de tool-use
+// natif ici, donc le schéma JSON est décrit dans le prompt et la réponse est reparsée.
+function extractJsonPayload(text: string): string {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = (fenced ? fenced[1] : text).trim();
+
+  try {
+    JSON.parse(candidate);
+    return candidate;
+  } catch {
+    const start = candidate.indexOf("{");
+    const end = candidate.lastIndexOf("}");
+    if (start === -1 || end === -1 || end < start) {
+      throw new Error("Aucun JSON exploitable dans la réponse.");
+    }
+    return candidate.slice(start, end + 1);
+  }
+}
+
+export async function generateStructured<T extends z.ZodTypeAny>({
+  system,
+  user,
+  schema,
+  toolName,
+  maxTokens = STRUCTURED_MAX_TOKENS,
+}: {
+  system: string;
+  user: string;
+  schema: T;
+  toolName: string;
+  maxTokens?: number;
+}): Promise<z.infer<T>> {
+  const jsonSchema = schema.toJSONSchema();
+  const approxMaxChars = maxTokens * 4;
+
+  const prompt = `${system}
+
+${user}
+
+Réponds UNIQUEMENT avec un objet JSON valide respectant exactement ce schéma JSON (aucun texte avant/après, aucune balise markdown) :
+${JSON.stringify(jsonSchema)}
+
+Ta réponse ne doit pas dépasser environ ${approxMaxChars} caractères.`;
+
+  const raw = await callClaudeApi(prompt);
+  const jsonText = extractJsonPayload(raw);
+
+  let parsedRaw: unknown;
+  try {
+    parsedRaw = JSON.parse(jsonText);
+  } catch {
+    throw new Error(`La génération structurée "${toolName}" a renvoyé un JSON invalide.`);
+  }
+
+  return schema.parse(parsedRaw);
+}
+
+export async function generateText(prompt: string): Promise<string> {
+  return callClaudeApi(prompt);
+}
