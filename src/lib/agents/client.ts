@@ -3,9 +3,14 @@ import type { z } from "zod";
 export const CLAUDE_API_URL = process.env.CLAUDE_API_URL;
 export const CLAUDE_API_TOKEN = process.env.CLAUDE_API_TOKEN;
 
-// Slightly above the VM wrapper's own internal timeout so we see its real error first.
-const DEFAULT_TIMEOUT_MS = 65_000;
-const MAX_TIMEOUT_MS = 220_000;
+// Sur Vercel, les fonctions ont une durée maximale (maxDuration = 60s, cf. les
+// routes/actions appelantes) : nos propres timeouts doivent rester nettement en
+// dessous pour que le repli s'exécute avant que la plateforme ne tue la fonction.
+// En local (pas de limite de ce type), on garde des timeouts généreux, nécessaires
+// avec le tunnel gratuit qui prend souvent 90-200s.
+export const IS_VERCEL = process.env.VERCEL === "1";
+const DEFAULT_TIMEOUT_MS = IS_VERCEL ? 40_000 : 65_000;
+const MAX_TIMEOUT_MS = IS_VERCEL ? 45_000 : 220_000;
 const STRUCTURED_MAX_TOKENS = 4096;
 
 export async function callClaudeApi(prompt: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<string> {
@@ -82,12 +87,17 @@ export async function generateStructured<T extends z.ZodTypeAny>({
   schema,
   toolName,
   maxTokens = STRUCTURED_MAX_TOKENS,
+  timeoutMs: timeoutOverrideMs,
 }: {
   system: string;
   user: string;
   schema: T;
   toolName: string;
   maxTokens?: number;
+  // Un appelant sans maxDuration explicite côté Vercel (une Server Action "use
+  // server" ne peut pas exporter maxDuration) doit forcer un timeout court et sûr
+  // ici, plutôt que dépendre de la durée par défaut (inconnue) de la plateforme.
+  timeoutMs?: number;
 }): Promise<z.infer<T>> {
   const jsonSchema = schema.toJSONSchema();
   const approxMaxChars = maxTokens * 4;
@@ -103,7 +113,8 @@ Ta réponse ne doit pas dépasser environ ${approxMaxChars} caractères.`;
 
   // Le wrapper CLI est lent (démarrage à froid + débit d'abonnement) : une grosse
   // génération structurée peut prendre bien plus que le timeout par défaut.
-  const timeoutMs = Math.min(MAX_TIMEOUT_MS, Math.max(DEFAULT_TIMEOUT_MS, maxTokens * 20));
+  const timeoutMs =
+    timeoutOverrideMs ?? Math.min(MAX_TIMEOUT_MS, Math.max(DEFAULT_TIMEOUT_MS, maxTokens * 20));
 
   return withRetry(async () => {
     const raw = await callClaudeApi(prompt, timeoutMs);

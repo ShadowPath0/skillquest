@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { completeTestSession } from "@/lib/test/complete";
 import { buildCelebrationParams } from "@/lib/gamification/celebration-params";
 
+export const maxDuration = 60;
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ sessionId: string }> }

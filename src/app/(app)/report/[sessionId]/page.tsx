@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { SkillRadarChart } from "@/components/report/skill-radar-chart";
 import { generateProgram } from "@/lib/plan/actions";
 import { CelebrationEffects } from "@/components/gamification/celebration-effects";
+import { PollUntilReady } from "@/components/shared/poll-until-ready";
 import type { AnalysisStrength, AnalysisWeakness } from "@/lib/agents/analysis-agent";
 
 const PRIORITY_BADGE_VARIANT: Record<AnalysisWeakness["priority"], "destructive" | "default" | "secondary"> = {
@@ -49,7 +50,20 @@ export default async function ReportPage({
     },
   });
 
-  if (!report || report.userId !== user.id) {
+  if (!report) {
+    // Le rapport est généré par un worker (voir scripts/worker.ts) sans limite de
+    // temps : on affiche un état d'attente plutôt qu'une 404 tant qu'il n'a pas fini.
+    const session = await prisma.testSession.findUnique({ where: { id: sessionId } });
+    if (!session || session.userId !== user.id) {
+      notFound();
+    }
+    if (session.status !== "COMPLETED") {
+      redirect(`/test/${sessionId}`);
+    }
+    return <PollUntilReady message="Ton rapport est en cours de préparation..." />;
+  }
+
+  if (report.userId !== user.id) {
     notFound();
   }
 

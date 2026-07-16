@@ -1,18 +1,16 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
-import { DEFAULT_DIFFICULTY } from "@/lib/adaptive/engine";
-import { generateQuestionPool } from "@/lib/agents/evaluation-agent";
+import { enqueueJob } from "@/lib/jobs/queue";
 
-// On génère un petit lot rapide en bloquant, puis le reste du pool en arrière-plan
-// après la redirection, pour ne pas faire attendre l'utilisateur avant la première
-// question. Des lots modérés (pas un seul énorme pool d'un coup) réduisent aussi le
-// risque qu'une requête individuelle traîne trop longtemps sur le tunnel gratuit.
-const FAST_BATCH_COUNT = 8;
-const BACKGROUND_BATCH_COUNT = 10;
+// Les questions sont générées par un worker qui tourne en continu sur la machine de
+// l'utilisateur (scripts/worker.ts), pas par la fonction Vercel elle-même : le
+// tunnel gratuit prend souvent 90-200s par lot, largement au-delà de la durée max
+// d'une fonction Vercel (60s). On empile juste les lots en file d'attente et on
+// redirige tout de suite ; la page de test attend que les questions arrivent.
+const BATCH_SIZE = 9;
 const FULL_POOL_COUNT = 54;
 
 async function ensureQuestionPool({
@@ -29,40 +27,28 @@ async function ensureQuestionPool({
   goalTitle: string;
 }) {
   const existingQuestions = await prisma.question.count({ where: { subdomainId } });
-  if (existingQuestions > 0) return true;
+  if (existingQuestions > 0) return;
 
-  await generateQuestionPool({
-    domainId,
-    subdomainId,
-    domainName,
-    subdomainName,
-    goalTitle,
-    count: FAST_BATCH_COUNT,
+  const alreadyQueued = await prisma.generationJob.findFirst({
+    where: {
+      type: "QUESTION_POOL",
+      status: { in: ["PENDING", "PROCESSING"] },
+      payloadJson: { path: ["subdomainId"], equals: subdomainId },
+    },
   });
+  if (alreadyQueued) return;
 
-  const generatedCount = await prisma.question.count({ where: { subdomainId } });
-  if (generatedCount === 0) return false;
-
-  const remainingBatches = Math.ceil((FULL_POOL_COUNT - FAST_BATCH_COUNT) / BACKGROUND_BATCH_COUNT);
-
-  after(async () => {
-    for (let i = 0; i < remainingBatches; i++) {
-      try {
-        await generateQuestionPool({
-          domainId,
-          subdomainId,
-          domainName,
-          subdomainName,
-          goalTitle,
-          count: BACKGROUND_BATCH_COUNT,
-        });
-      } catch (err) {
-        console.error("ensureQuestionPool: lot d'arrière-plan échoué, on continue avec les suivants.", err);
-      }
-    }
-  });
-
-  return true;
+  const batchCount = Math.ceil(FULL_POOL_COUNT / BATCH_SIZE);
+  for (let i = 0; i < batchCount; i++) {
+    await enqueueJob("QUESTION_POOL", {
+      domainId,
+      subdomainId,
+      domainName,
+      subdomainName,
+      goalTitle,
+      count: BATCH_SIZE,
+    });
+  }
 }
 
 export async function startTest(formData: FormData) {
@@ -86,7 +72,7 @@ export async function startTest(formData: FormData) {
     redirect("/domains");
   }
 
-  const ready = await ensureQuestionPool({
+  await ensureQuestionPool({
     domainId: goal.domainId,
     subdomainId: goal.subdomainId,
     domainName: goal.domain.name,
@@ -94,33 +80,17 @@ export async function startTest(formData: FormData) {
     goalTitle: goal.goalTemplate?.title ?? goal.customTitle ?? goal.subdomain.name,
   });
 
-  if (!ready) {
-    redirect(
-      `/domains?error=${encodeURIComponent(
-        "Impossible de préparer l'épreuve pour cette quête. Réessaie."
-      )}`
-    );
-  }
-
   const session = await prisma.testSession.create({
     data: {
       userId: user.id,
       domainId: goal.domainId,
       goalId: goal.id,
       kind: "PLACEMENT",
-      currentDifficulty: DEFAULT_DIFFICULTY,
     },
   });
 
   redirect(`/test/${session.id}`);
 }
-
-const SKILL_LEVEL_START_DIFFICULTY: Record<string, number> = {
-  BEGINNER: 1.5,
-  INTERMEDIATE: 2.5,
-  ADVANCED: 3.5,
-  EXPERT: 4.5,
-};
 
 export async function startFinalExam(formData: FormData) {
   const programId = String(formData.get("programId") ?? "");
@@ -145,14 +115,6 @@ export async function startFinalExam(formData: FormData) {
     redirect("/domains");
   }
 
-  const latestReport = await prisma.aiReport.findFirst({
-    where: { userId: user.id, testSession: { goalId: program.goalId } },
-    orderBy: { createdAt: "desc" },
-  });
-  const startDifficulty = latestReport
-    ? (SKILL_LEVEL_START_DIFFICULTY[latestReport.level] ?? DEFAULT_DIFFICULTY)
-    : DEFAULT_DIFFICULTY;
-
   await ensureQuestionPool({
     domainId: program.goal.domainId,
     subdomainId: program.goal.subdomainId,
@@ -168,7 +130,6 @@ export async function startFinalExam(formData: FormData) {
       domainId: program.goal.domainId,
       goalId: program.goalId,
       kind: "FINAL_EXAM",
-      currentDifficulty: startDifficulty,
     },
   });
 

@@ -384,3 +384,37 @@ model CoachMessage {
 
   @@index([conversationId])
 }
+
+// ---------- Background generation queue ----------
+//
+// Le tunnel gratuit + CLI Claude peut prendre 90-200s par appel, bien au-delà de la
+// durée max d'une fonction Vercel (60s sur le plan gratuit). Ces tâches lourdes sont
+// donc mises en file ici plutôt qu'appelées en direct depuis Vercel : un worker qui
+// tourne en continu sur la machine de l'utilisateur (aux côtés de claude-api-vm) les
+// traite sans contrainte de temps et écrit les résultats directement en base.
+
+enum GenerationJobType {
+  QUESTION_POOL
+  GRADE_ANSWER
+  AI_REPORT
+  WEEKLY_PROGRAM
+}
+
+enum GenerationJobStatus {
+  PENDING
+  PROCESSING
+  DONE
+  FAILED
+}
+
+model GenerationJob {
+  id          String              @id @default(cuid())
+  type        GenerationJobType
+  payloadJson Json
+  status      GenerationJobStatus @default(PENDING)
+  error       String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([status, createdAt])
+}

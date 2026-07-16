@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { generateAiReport } from "@/lib/agents/analysis-agent";
+import { enqueueJob } from "@/lib/jobs/queue";
 import { awardXp, touchStreak } from "@/lib/gamification/xp";
 import { evaluateBadges } from "@/lib/gamification/badges";
 
@@ -9,12 +9,18 @@ const BASE_XP_BY_KIND: Record<string, number> = {
   PRACTICE: 50,
 };
 
-const PENDING_GRADING_MAX_WAIT_MS = 90_000;
+// Bornés bien en dessous de la durée max d'une fonction Vercel (60s) : la correction
+// des réponses libres et la génération du rapport tournent sur le worker local, sans
+// cette contrainte, donc on n'attend ici qu'un court instant avant de laisser la page
+// de rapport prendre le relais (elle patiente à son tour, côté client).
+const PENDING_GRADING_MAX_WAIT_MS = 20_000;
 const PENDING_GRADING_POLL_INTERVAL_MS = 2_000;
 
-// Les réponses libres sont notées en tâche de fond pendant que l'utilisateur avance
-// dans le test : au moment de générer le rapport final, on attend que ces corrections
-// arrivent plutôt que de figer des scores neutres provisoires dans le rapport.
+// Les réponses libres sont notées par des GRADE_ANSWER en file d'attente, traités par
+// le worker dans l'ordre de création — donc avant la tâche AI_REPORT créée juste après
+// ici. On patiente un court instant (best-effort, borné très en dessous des 60s de
+// Vercel) pour que les corrections déjà en cours aient une chance d'arriver avant de
+// figer le score global ; celles qui n'ont pas fini restent en file, pas perdues.
 async function waitForPendingGradings(sessionId: string) {
   const start = Date.now();
   while (Date.now() - start < PENDING_GRADING_MAX_WAIT_MS) {
@@ -24,12 +30,6 @@ async function waitForPendingGradings(sessionId: string) {
     if (pendingCount === 0) return;
     await new Promise((resolve) => setTimeout(resolve, PENDING_GRADING_POLL_INTERVAL_MS));
   }
-  // Sécurité : on arrête d'attendre plutôt que de bloquer indéfiniment si une
-  // correction en fond ne se termine jamais (échec silencieux du after()).
-  await prisma.answer.updateMany({
-    where: { testSessionId: sessionId, pendingGrading: true },
-    data: { pendingGrading: false },
-  });
 }
 
 export async function completeTestSession(sessionId: string, userId: string) {
@@ -48,7 +48,7 @@ export async function completeTestSession(sessionId: string, userId: string) {
     data: { status: "COMPLETED", completedAt: new Date(), globalScore },
   });
 
-  await generateAiReport(sessionId);
+  await enqueueJob("AI_REPORT", { testSessionId: sessionId });
 
   const baseXp = BASE_XP_BY_KIND[session.kind] ?? BASE_XP_BY_KIND.PLACEMENT;
   const reason =

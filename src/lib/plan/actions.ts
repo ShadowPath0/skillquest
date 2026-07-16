@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
-import { generateWeeklyProgram } from "@/lib/agents/planner-agent";
+import { enqueueJob } from "@/lib/jobs/queue";
 import { awardXp, touchStreak } from "@/lib/gamification/xp";
 import { evaluateBadges } from "@/lib/gamification/badges";
 import { buildCelebrationParams } from "@/lib/gamification/celebration-params";
@@ -37,8 +37,24 @@ export async function generateProgram(formData: FormData) {
     redirect(`/plan/${existing.id}`);
   }
 
-  const program = await generateWeeklyProgram(report.testSession.goalId, report.id);
-  redirect(`/plan/${program.id}`);
+  // Le programme est construit par le worker (voir scripts/worker.ts), sans la
+  // contrainte de durée d'une fonction Vercel : on empile la tâche et on redirige
+  // vers une page d'attente qui se met à jour toute seule jusqu'à ce qu'il soit prêt.
+  const alreadyQueued = await prisma.generationJob.findFirst({
+    where: {
+      type: "WEEKLY_PROGRAM",
+      status: { in: ["PENDING", "PROCESSING"] },
+      payloadJson: { path: ["aiReportId"], equals: reportId },
+    },
+  });
+  if (!alreadyQueued) {
+    await enqueueJob("WEEKLY_PROGRAM", {
+      goalId: report.testSession.goalId,
+      aiReportId: report.id,
+    });
+  }
+
+  redirect(`/plan/pending/${reportId}`);
 }
 
 export async function completeMission(formData: FormData) {

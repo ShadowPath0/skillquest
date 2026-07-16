@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { generateStructured } from "./client";
+import { generateStructured, IS_VERCEL } from "./client";
 import { slugify } from "@/lib/slug";
 import { DOMAIN_ICON_KEYS } from "@/lib/domain-icons";
 
@@ -35,6 +35,12 @@ Donne :
 - goalTitle : l'objectif reformulé de façon claire et motivante (3 à 8 mots)
 - goalDescription : une phrase expliquant l'objectif
 - skillCategories : 2 à 6 catégories de compétences courtes qui structureront un radar de compétences pour ce sujet`,
+      // submitFreeformDomain est une Server Action : elle ne peut pas déclarer de
+      // maxDuration (interdit dans un fichier "use server"), donc sa durée dépend du
+      // défaut de la plateforme sur Vercel. On force un timeout court pour être sûr
+      // de retomber sur le repli heuristique avant que la plateforme ne tue la
+      // fonction, plutôt que de risquer une erreur brute côté utilisateur.
+      timeoutMs: IS_VERCEL ? 8_000 : undefined,
     });
 
     return {

@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { generateText } from "@/lib/agents/client";
 import { buildCoachContext, buildCoachPrompt } from "@/lib/agents/coach-agent";
 
+export const maxDuration = 60;
+
 const FALLBACK_MESSAGE =
   "Le coach IA n'est pas disponible pour le moment (API Claude non configurée). Réessaie une fois l'API renseignée.";
 

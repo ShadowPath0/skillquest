@@ -1,11 +1,12 @@
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
-import { computeSkillTagCounts, waitForAvailableQuestion } from "@/lib/adaptive/engine";
+import { waitForAvailableQuestion } from "@/lib/adaptive/engine";
 import { PLACEMENT_TEST_LENGTH } from "@/lib/test/constants";
 import { completeTestSession } from "@/lib/test/complete";
 import { buildCelebrationParams } from "@/lib/gamification/celebration-params";
 import { TestRunner } from "@/components/test/test-runner";
+import { PollUntilReady } from "@/components/shared/poll-until-ready";
 
 export default async function TestSessionPage({
   params,
@@ -53,15 +54,17 @@ export default async function TestSessionPage({
     redirect(`/report/${sessionId}?${buildCelebrationParams(result)}`);
   }
 
-  const skillTagCounts = await computeSkillTagCounts(sessionId);
   const question = await waitForAvailableQuestion({
     subdomainId: session.goal.subdomainId,
-    difficulty: session.currentDifficulty,
     excludeIds,
-    skillTagCounts,
   });
 
   if (!question) {
+    if (answeredCount === 0) {
+      // Le pool n'a pas encore de questions : le worker (voir scripts/worker.ts) est
+      // probablement encore en train de les générer, pas de quoi terminer le test.
+      return <PollUntilReady message="Le Grimoire tisse ton épreuve..." />;
+    }
     // Pool exhausted before reaching the target length: finish with what we have.
     const result = await completeTestSession(sessionId, user.id);
     redirect(`/report/${sessionId}?${buildCelebrationParams(result)}`);

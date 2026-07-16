@@ -1,40 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
-import {
-  computeSkillTagCounts,
-  nextDifficulty,
-  waitForAvailableQuestion,
-} from "@/lib/adaptive/engine";
-import { gradeOpenAnswer } from "@/lib/agents/evaluation-agent";
+import { waitForAvailableQuestion } from "@/lib/adaptive/engine";
+import { enqueueJob } from "@/lib/jobs/queue";
 import { PLACEMENT_TEST_LENGTH } from "@/lib/test/constants";
 
-async function gradeInBackground(
-  answerId: string,
-  promptMd: string,
-  referenceAnswer: string,
-  userAnswer: string
-) {
-  try {
-    const grading = await gradeOpenAnswer({ promptMd, referenceAnswer, userAnswer });
-    await prisma.answer.update({
-      where: { id: answerId },
-      data: {
-        isCorrect: grading.isCorrect,
-        score: grading.score,
-        aiGradingJson: grading,
-        pendingGrading: false,
-      },
-    });
-  } catch (err) {
-    console.error("gradeInBackground: correction différée échouée, score neutre conservé.", err);
-    await prisma.answer.update({
-      where: { id: answerId },
-      data: { pendingGrading: false },
-    });
-  }
-}
+export const maxDuration = 60;
 
 export async function POST(
   request: NextRequest,
@@ -89,26 +60,10 @@ export async function POST(
 
   // Les réponses libres notées par IA ne bloquent plus le passage à la question
   // suivante : elles partent avec un score neutre et une note "en attente", corrigées
-  // en tâche de fond. La difficulté reste stable ce tour-ci plutôt que de deviner.
-  let isCorrect: boolean;
-  let score: number;
-  let updatedDifficulty: number;
+  // en tâche de fond.
   const pendingGrading = isFreeTextType;
-
-  if (isFreeTextType) {
-    isCorrect = false;
-    score = 0.5;
-    updatedDifficulty = session.currentDifficulty;
-  } else {
-    isCorrect = userAnswer.trim() === correctAnswer.trim();
-    score = isCorrect ? 1 : 0;
-    updatedDifficulty = nextDifficulty(
-      session.currentDifficulty,
-      isCorrect,
-      timeSpentSec,
-      question.estimatedTimeSec
-    );
-  }
+  const isCorrect = isFreeTextType ? false : userAnswer.trim() === correctAnswer.trim();
+  const score = isFreeTextType ? 0.5 : isCorrect ? 1 : 0;
 
   const answeredCount = await prisma.answer.count({
     where: { testSessionId: sessionId },
@@ -122,20 +77,20 @@ export async function POST(
       isCorrect,
       score,
       timeSpentSec,
-      difficultyAtTime: session.currentDifficulty,
+      difficultyAtTime: question.difficulty,
       sequenceIndex: answeredCount,
       pendingGrading,
     },
   });
 
   if (isFreeTextType) {
-    after(() => gradeInBackground(answer.id, question.promptMd, correctAnswer, userAnswer));
+    await enqueueJob("GRADE_ANSWER", {
+      answerId: answer.id,
+      promptMd: question.promptMd,
+      referenceAnswer: correctAnswer,
+      userAnswer,
+    });
   }
-
-  await prisma.testSession.update({
-    where: { id: sessionId },
-    data: { currentDifficulty: updatedDifficulty },
-  });
 
   const totalAnswered = answeredCount + 1;
   const reachedLength = totalAnswered >= PLACEMENT_TEST_LENGTH;
@@ -155,13 +110,11 @@ export async function POST(
       select: { questionId: true },
     })
   ).map((a) => a.questionId);
-  const skillTagCounts = await computeSkillTagCounts(sessionId);
 
   const next = await waitForAvailableQuestion({
     subdomainId: goal.subdomainId,
-    difficulty: updatedDifficulty,
     excludeIds,
-    skillTagCounts,
+    maxWaitMs: 50_000,
   });
 
   if (!next) {
