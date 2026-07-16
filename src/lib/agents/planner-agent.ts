@@ -109,7 +109,10 @@ Construis un programme de 6 semaines (weeks) qui suit cet arc :
 
 Pour chaque semaine : 2 à 5 objectifs (objectives), 1 à 5 compétences travaillées (skills), un volume horaire estimé (estimatedHours), une difficulté (difficulty, 1 à 5, progressant globalement sur les 6 semaines), et 3 à 5 missions journalières (missions) avec un titre, une description, une récompense en XP (xpReward, 50 à 500) et 2 à 6 tâches concrètes (tasks).
 
-Contrainte importante : chaque semaine doit inclure au moins une mission qui est un exercice pratique substantiel (un cas concret à traiter, pas de la lecture passive), directement lié à un des points faibles listés ci-dessus plutôt qu'une répétition générique. Dans "description" de cette mission, précise explicitement que le résultat est à soumettre au Coach IA pour correction détaillée.`,
+Contraintes importantes :
+- Chaque mission journalière (pas seulement une par semaine) doit comporter une part concrète et appliquée — un exercice pratique, une mise en situation, une étude de cas courte, ou un mini-cas à résoudre — jamais une mission purement passive de lecture ou de révision sans production concrète de la part de l'utilisateur. L'ampleur peut varier (un exercice court de 15-20 min en début de semaine, un cas plus substantiel en fin de semaine), mais chaque jour doit produire quelque chose de concret directement lié à un des points faibles listés ci-dessus, pas une répétition générique.
+- Pour toute mission dont le résultat mérite une correction détaillée (exercice substantiel, mise en situation, étude de cas), précise explicitement dans "description" qu'elle est à soumettre au Coach IA pour correction.
+- La semaine 6 doit comporter au moins une mise en situation complexe mobilisant plusieurs compétences travaillées (équivalent d'un entretien technique ou d'un cas de synthèse).`,
       maxTokens: 8192,
     });
 
