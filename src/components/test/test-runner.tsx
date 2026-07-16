@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, XCircle } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -29,8 +29,6 @@ type SafeQuestion = {
 type Progress = { answered: number; total: number };
 
 type AnswerResponse = {
-  isCorrect: boolean;
-  explanationMd: string;
   progress: Progress;
   isComplete: boolean;
   nextQuestion: SafeQuestion | null;
@@ -51,8 +49,6 @@ export function TestRunner({
   const [answer, setAnswer] = useState("");
   const [startedAt, setStartedAt] = useState(() => Date.now());
   const [submitting, setSubmitting] = useState(false);
-  const [feedback, setFeedback] = useState<AnswerResponse | null>(null);
-  const [finishing, setFinishing] = useState(false);
 
   useEffect(() => {
     setStartedAt(Date.now());
@@ -80,24 +76,17 @@ export function TestRunner({
     }
 
     const data: AnswerResponse = await res.json();
-    setFeedback(data);
     setProgress(data.progress);
-    setSubmitting(false);
-  }
 
-  async function continueAfterFeedback() {
-    if (!feedback) return;
-
-    if (feedback.isComplete || !feedback.nextQuestion) {
-      setFinishing(true);
-      const res = await fetch(`/api/test/${sessionId}/complete`, { method: "POST" });
-      const data = await res.json();
-      router.push(data.redirectTo ?? "/domains");
+    if (data.isComplete || !data.nextQuestion) {
+      const completeRes = await fetch(`/api/test/${sessionId}/complete`, { method: "POST" });
+      const completeData = await completeRes.json();
+      router.push(completeData.redirectTo ?? "/domains");
       return;
     }
 
-    setQuestion(feedback.nextQuestion);
-    setFeedback(null);
+    setQuestion(data.nextQuestion);
+    setSubmitting(false);
   }
 
   const percent = Math.round((progress.answered / progress.total) * 100);
@@ -120,36 +109,17 @@ export function TestRunner({
           <p className="text-lg font-medium">{question.promptMd}</p>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
-          {feedback ? (
-            <div className="flex flex-col gap-4">
-              <div
-                className={`flex items-center gap-2 text-sm font-medium ${
-                  feedback.isCorrect ? "text-emerald-500" : "text-destructive"
-                }`}
-              >
-                {feedback.isCorrect ? (
-                  <CheckCircle2 className="size-5" />
-                ) : (
-                  <XCircle className="size-5" />
-                )}
-                {feedback.isCorrect ? "Bonne réponse" : "Réponse incorrecte"}
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {feedback.explanationMd}
-              </p>
-              <Button onClick={continueAfterFeedback} disabled={finishing}>
-                {feedback.isComplete ? "Voir mes résultats" : "Question suivante"}
-              </Button>
-            </div>
-          ) : question.type !== "MCQ" && question.type !== "TRUE_FALSE" ? (
+          {question.type !== "MCQ" && question.type !== "TRUE_FALSE" ? (
             <div className="flex flex-col gap-4">
               <Textarea
                 value={answer}
                 onChange={(e) => setAnswer(e.target.value)}
                 placeholder="Ta réponse..."
                 rows={5}
+                disabled={submitting}
               />
               <Button onClick={submitAnswer} disabled={submitting || !answer.trim()}>
+                {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
                 Valider
               </Button>
             </div>
@@ -158,7 +128,7 @@ export function TestRunner({
               <RadioGroup value={answer} onValueChange={setAnswer}>
                 {(question.choices ?? []).map((choice) => (
                   <div key={choice} className="flex items-center gap-3">
-                    <RadioGroupItem value={choice} id={choice} />
+                    <RadioGroupItem value={choice} id={choice} disabled={submitting} />
                     <Label htmlFor={choice} className="font-normal">
                       {choice}
                     </Label>
@@ -166,6 +136,7 @@ export function TestRunner({
                 ))}
               </RadioGroup>
               <Button onClick={submitAnswer} disabled={submitting || !answer}>
+                {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
                 Valider
               </Button>
             </div>

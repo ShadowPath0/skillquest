@@ -42,9 +42,10 @@ Donne :
       domainSlug: slugify(parsed.domainName) || "domaine",
       subdomainSlug: slugify(parsed.subdomainName) || "general",
     };
-  } catch {
+  } catch (err) {
     // No CLAUDE_API_URL/CLAUDE_API_TOKEN configured or the call failed: derive a domain
     // directly from the raw input rather than blocking the user.
+    console.error("generateDomainFromPrompt: appel IA échoué, repli heuristique.", err);
     return buildFallbackDomain(input);
   }
 }

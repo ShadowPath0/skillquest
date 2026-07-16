@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
-import { computeSkillTagCounts, selectNextQuestion } from "@/lib/adaptive/engine";
+import { computeSkillTagCounts, waitForAvailableQuestion } from "@/lib/adaptive/engine";
 import { PLACEMENT_TEST_LENGTH } from "@/lib/test/constants";
 import { completeTestSession } from "@/lib/test/complete";
 import { buildCelebrationParams } from "@/lib/gamification/celebration-params";
@@ -54,7 +54,7 @@ export default async function TestSessionPage({
   }
 
   const skillTagCounts = await computeSkillTagCounts(sessionId);
-  const question = await selectNextQuestion({
+  const question = await waitForAvailableQuestion({
     subdomainId: session.goal.subdomainId,
     difficulty: session.currentDifficulty,
     excludeIds,

@@ -44,6 +44,31 @@ export async function computeSkillTagCounts(
   return counts;
 }
 
+// Le pool peut encore être en cours de génération en arrière-plan (cf.
+// ensureQuestionPool) : on patiente un peu avant de conclure qu'il n'y a plus de
+// questions, plutôt que de terminer le test prématurément.
+export async function waitForAvailableQuestion({
+  subdomainId,
+  difficulty,
+  excludeIds,
+  skillTagCounts,
+  maxWaitMs = 20_000,
+}: {
+  subdomainId: string;
+  difficulty: number;
+  excludeIds: string[];
+  skillTagCounts: Record<string, number>;
+  maxWaitMs?: number;
+}): Promise<Question | null> {
+  const start = Date.now();
+  while (true) {
+    const next = await selectNextQuestion({ subdomainId, difficulty, excludeIds, skillTagCounts });
+    if (next) return next;
+    if (Date.now() - start >= maxWaitMs) return null;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+}
+
 export async function selectNextQuestion({
   subdomainId,
   difficulty,

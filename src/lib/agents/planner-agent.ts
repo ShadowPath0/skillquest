@@ -114,8 +114,9 @@ Contrainte importante : chaque semaine doit inclure au moins une mission qui est
     });
 
     weeks = parsed.weeks;
-  } catch {
+  } catch (err) {
     // No CLAUDE_API_URL/CLAUDE_API_TOKEN configured or the call failed: keep the fallback plan.
+    console.error("generateWeeklyProgram: appel IA échoué, repli sur le plan générique.", err);
   }
 
   const program = await prisma.weeklyProgram.create({

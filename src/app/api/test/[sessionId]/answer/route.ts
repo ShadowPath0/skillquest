@@ -1,14 +1,40 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { Prisma } from "@prisma/client";
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
 import {
   computeSkillTagCounts,
   nextDifficulty,
-  selectNextQuestion,
+  waitForAvailableQuestion,
 } from "@/lib/adaptive/engine";
 import { gradeOpenAnswer } from "@/lib/agents/evaluation-agent";
 import { PLACEMENT_TEST_LENGTH } from "@/lib/test/constants";
+
+async function gradeInBackground(
+  answerId: string,
+  promptMd: string,
+  referenceAnswer: string,
+  userAnswer: string
+) {
+  try {
+    const grading = await gradeOpenAnswer({ promptMd, referenceAnswer, userAnswer });
+    await prisma.answer.update({
+      where: { id: answerId },
+      data: {
+        isCorrect: grading.isCorrect,
+        score: grading.score,
+        aiGradingJson: grading,
+        pendingGrading: false,
+      },
+    });
+  } catch (err) {
+    console.error("gradeInBackground: correction différée échouée, score neutre conservé.", err);
+    await prisma.answer.update({
+      where: { id: answerId },
+      data: { pendingGrading: false },
+    });
+  }
+}
 
 export async function POST(
   request: NextRequest,
@@ -54,49 +80,41 @@ export async function POST(
     return NextResponse.json({ error: "already_answered" }, { status: 409 });
   }
 
-  let isCorrect: boolean;
-  let score: number;
-  let explanationMd = question.explanationMd;
-  let aiGradingJson: Prisma.InputJsonValue | undefined;
-
   const correctAnswer = String(question.correctAnswerJson);
-
   const isFreeTextType =
     question.type === "OPEN" ||
     question.type === "PRACTICAL" ||
     question.type === "CASE_STUDY" ||
     question.type === "SCENARIO";
 
+  // Les réponses libres notées par IA ne bloquent plus le passage à la question
+  // suivante : elles partent avec un score neutre et une note "en attente", corrigées
+  // en tâche de fond. La difficulté reste stable ce tour-ci plutôt que de deviner.
+  let isCorrect: boolean;
+  let score: number;
+  let updatedDifficulty: number;
+  const pendingGrading = isFreeTextType;
+
   if (isFreeTextType) {
-    try {
-      const grading = await gradeOpenAnswer({
-        promptMd: question.promptMd,
-        referenceAnswer: correctAnswer,
-        userAnswer,
-      });
-      isCorrect = grading.isCorrect;
-      score = grading.score;
-      explanationMd = grading.feedbackMd;
-      aiGradingJson = grading;
-    } catch {
-      // No CLAUDE_API_URL/CLAUDE_API_TOKEN configured or the call failed: fall back to a
-      // neutral score rather than blocking the test flow.
-      isCorrect = false;
-      score = 0.5;
-      explanationMd =
-        "Correction automatique indisponible pour le moment. Voici la réponse de référence : " +
-        correctAnswer;
-    }
+    isCorrect = false;
+    score = 0.5;
+    updatedDifficulty = session.currentDifficulty;
   } else {
     isCorrect = userAnswer.trim() === correctAnswer.trim();
     score = isCorrect ? 1 : 0;
+    updatedDifficulty = nextDifficulty(
+      session.currentDifficulty,
+      isCorrect,
+      timeSpentSec,
+      question.estimatedTimeSec
+    );
   }
 
   const answeredCount = await prisma.answer.count({
     where: { testSessionId: sessionId },
   });
 
-  await prisma.answer.create({
+  const answer = await prisma.answer.create({
     data: {
       testSessionId: sessionId,
       questionId,
@@ -106,16 +124,13 @@ export async function POST(
       timeSpentSec,
       difficultyAtTime: session.currentDifficulty,
       sequenceIndex: answeredCount,
-      aiGradingJson,
+      pendingGrading,
     },
   });
 
-  const updatedDifficulty = nextDifficulty(
-    session.currentDifficulty,
-    isCorrect,
-    timeSpentSec,
-    question.estimatedTimeSec
-  );
+  if (isFreeTextType) {
+    after(() => gradeInBackground(answer.id, question.promptMd, correctAnswer, userAnswer));
+  }
 
   await prisma.testSession.update({
     where: { id: sessionId },
@@ -127,8 +142,6 @@ export async function POST(
 
   if (reachedLength) {
     return NextResponse.json({
-      isCorrect,
-      explanationMd,
       progress: { answered: totalAnswered, total: PLACEMENT_TEST_LENGTH },
       isComplete: true,
       nextQuestion: null,
@@ -144,7 +157,7 @@ export async function POST(
   ).map((a) => a.questionId);
   const skillTagCounts = await computeSkillTagCounts(sessionId);
 
-  const next = await selectNextQuestion({
+  const next = await waitForAvailableQuestion({
     subdomainId: goal.subdomainId,
     difficulty: updatedDifficulty,
     excludeIds,
@@ -153,8 +166,6 @@ export async function POST(
 
   if (!next) {
     return NextResponse.json({
-      isCorrect,
-      explanationMd,
       progress: { answered: totalAnswered, total: PLACEMENT_TEST_LENGTH },
       isComplete: true,
       nextQuestion: null,
@@ -162,8 +173,6 @@ export async function POST(
   }
 
   return NextResponse.json({
-    isCorrect,
-    explanationMd,
     progress: { answered: totalAnswered, total: PLACEMENT_TEST_LENGTH },
     isComplete: false,
     nextQuestion: {

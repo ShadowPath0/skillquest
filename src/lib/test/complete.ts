@@ -9,8 +9,33 @@ const BASE_XP_BY_KIND: Record<string, number> = {
   PRACTICE: 50,
 };
 
+const PENDING_GRADING_MAX_WAIT_MS = 90_000;
+const PENDING_GRADING_POLL_INTERVAL_MS = 2_000;
+
+// Les réponses libres sont notées en tâche de fond pendant que l'utilisateur avance
+// dans le test : au moment de générer le rapport final, on attend que ces corrections
+// arrivent plutôt que de figer des scores neutres provisoires dans le rapport.
+async function waitForPendingGradings(sessionId: string) {
+  const start = Date.now();
+  while (Date.now() - start < PENDING_GRADING_MAX_WAIT_MS) {
+    const pendingCount = await prisma.answer.count({
+      where: { testSessionId: sessionId, pendingGrading: true },
+    });
+    if (pendingCount === 0) return;
+    await new Promise((resolve) => setTimeout(resolve, PENDING_GRADING_POLL_INTERVAL_MS));
+  }
+  // Sécurité : on arrête d'attendre plutôt que de bloquer indéfiniment si une
+  // correction en fond ne se termine jamais (échec silencieux du after()).
+  await prisma.answer.updateMany({
+    where: { testSessionId: sessionId, pendingGrading: true },
+    data: { pendingGrading: false },
+  });
+}
+
 export async function completeTestSession(sessionId: string, userId: string) {
   const session = await prisma.testSession.findUniqueOrThrow({ where: { id: sessionId } });
+
+  await waitForPendingGradings(sessionId);
 
   const answers = await prisma.answer.findMany({ where: { testSessionId: sessionId } });
   const globalScore =

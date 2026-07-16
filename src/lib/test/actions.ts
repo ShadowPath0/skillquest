@@ -1,10 +1,69 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
 import { DEFAULT_DIFFICULTY } from "@/lib/adaptive/engine";
 import { generateQuestionPool } from "@/lib/agents/evaluation-agent";
+
+// On génère un petit lot rapide en bloquant, puis le reste du pool en arrière-plan
+// après la redirection, pour ne pas faire attendre l'utilisateur avant la première
+// question. Des lots modérés (pas un seul énorme pool d'un coup) réduisent aussi le
+// risque qu'une requête individuelle traîne trop longtemps sur le tunnel gratuit.
+const FAST_BATCH_COUNT = 8;
+const BACKGROUND_BATCH_COUNT = 10;
+const FULL_POOL_COUNT = 54;
+
+async function ensureQuestionPool({
+  domainId,
+  subdomainId,
+  domainName,
+  subdomainName,
+  goalTitle,
+}: {
+  domainId: string;
+  subdomainId: string;
+  domainName: string;
+  subdomainName: string;
+  goalTitle: string;
+}) {
+  const existingQuestions = await prisma.question.count({ where: { subdomainId } });
+  if (existingQuestions > 0) return true;
+
+  await generateQuestionPool({
+    domainId,
+    subdomainId,
+    domainName,
+    subdomainName,
+    goalTitle,
+    count: FAST_BATCH_COUNT,
+  });
+
+  const generatedCount = await prisma.question.count({ where: { subdomainId } });
+  if (generatedCount === 0) return false;
+
+  const remainingBatches = Math.ceil((FULL_POOL_COUNT - FAST_BATCH_COUNT) / BACKGROUND_BATCH_COUNT);
+
+  after(async () => {
+    for (let i = 0; i < remainingBatches; i++) {
+      try {
+        await generateQuestionPool({
+          domainId,
+          subdomainId,
+          domainName,
+          subdomainName,
+          goalTitle,
+          count: BACKGROUND_BATCH_COUNT,
+        });
+      } catch (err) {
+        console.error("ensureQuestionPool: lot d'arrière-plan échoué, on continue avec les suivants.", err);
+      }
+    }
+  });
+
+  return true;
+}
 
 export async function startTest(formData: FormData) {
   const goalId = String(formData.get("goalId") ?? "");
@@ -27,30 +86,20 @@ export async function startTest(formData: FormData) {
     redirect("/domains");
   }
 
-  const existingQuestions = await prisma.question.count({
-    where: { subdomainId: goal.subdomainId },
+  const ready = await ensureQuestionPool({
+    domainId: goal.domainId,
+    subdomainId: goal.subdomainId,
+    domainName: goal.domain.name,
+    subdomainName: goal.subdomain.name,
+    goalTitle: goal.goalTemplate?.title ?? goal.customTitle ?? goal.subdomain.name,
   });
 
-  if (existingQuestions === 0) {
-    await generateQuestionPool({
-      domainId: goal.domainId,
-      subdomainId: goal.subdomainId,
-      domainName: goal.domain.name,
-      subdomainName: goal.subdomain.name,
-      goalTitle: goal.goalTemplate?.title ?? goal.customTitle ?? goal.subdomain.name,
-      count: 55,
-    });
-
-    const generatedCount = await prisma.question.count({
-      where: { subdomainId: goal.subdomainId },
-    });
-    if (generatedCount === 0) {
-      redirect(
-        `/domains?error=${encodeURIComponent(
-          "Impossible de préparer l'épreuve pour cette quête. Réessaie."
-        )}`
-      );
-    }
+  if (!ready) {
+    redirect(
+      `/domains?error=${encodeURIComponent(
+        "Impossible de préparer l'épreuve pour cette quête. Réessaie."
+      )}`
+    );
   }
 
   const session = await prisma.testSession.create({
@@ -104,21 +153,14 @@ export async function startFinalExam(formData: FormData) {
     ? (SKILL_LEVEL_START_DIFFICULTY[latestReport.level] ?? DEFAULT_DIFFICULTY)
     : DEFAULT_DIFFICULTY;
 
-  const existingQuestions = await prisma.question.count({
-    where: { subdomainId: program.goal.subdomainId },
+  await ensureQuestionPool({
+    domainId: program.goal.domainId,
+    subdomainId: program.goal.subdomainId,
+    domainName: program.goal.domain.name,
+    subdomainName: program.goal.subdomain.name,
+    goalTitle:
+      program.goal.goalTemplate?.title ?? program.goal.customTitle ?? program.goal.subdomain.name,
   });
-
-  if (existingQuestions === 0) {
-    await generateQuestionPool({
-      domainId: program.goal.domainId,
-      subdomainId: program.goal.subdomainId,
-      domainName: program.goal.domain.name,
-      subdomainName: program.goal.subdomain.name,
-      goalTitle:
-        program.goal.goalTemplate?.title ?? program.goal.customTitle ?? program.goal.subdomain.name,
-      count: 55,
-    });
-  }
 
   const session = await prisma.testSession.create({
     data: {

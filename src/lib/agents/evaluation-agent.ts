@@ -61,14 +61,15 @@ Pour les études de cas (type CASE_STUDY) : "promptMd" présente une mise en sit
 Pour les mises en situation (type SCENARIO) : "promptMd" décrit un scénario concret avec un choix ou un jugement à faire, "choices" doit être null et "correctAnswer" décrit la démarche ou décision attendue et pourquoi.
 Chaque question doit avoir 1 à 3 "skillTags" courts et cohérents entre eux (ex. "Hooks", "Gestion d'état").
 Évite les questions vagues ou purement définitionnelles ("Qu'est-ce que X ?") sauf aux difficultés 1-2 : aux difficultés 3-5, teste l'application, l'analyse d'un cas, ou la distinction entre deux notions proches souvent confondues.`,
-      maxTokens: 8192,
+      maxTokens: Math.min(8192, Math.max(2048, count * 1200)),
     });
 
     questions = parsed.questions;
-  } catch {
+  } catch (err) {
     // No CLAUDE_API_URL/CLAUDE_API_TOKEN configured or the call failed: fall back to a
     // small generic pool so a freeform domain never gets stuck without questions.
-    questions = buildFallbackQuestionPool(subdomainName, goalTitle);
+    console.error("generateQuestionPool: appel IA échoué, repli sur le pool générique.", err);
+    questions = buildFallbackQuestionPool(subdomainName, goalTitle, count);
     aiGenerated = false;
   }
 
@@ -102,7 +103,7 @@ const FALLBACK_QUESTION_BUILDERS: Record<
   TRUE_FALSE: (difficulty, subdomainName) => ({
     type: "TRUE_FALSE",
     difficulty,
-    promptMd: `Je me sens à l'aise avec les notions de niveau ${difficulty}/5 en ${subdomainName}.`,
+    promptMd: `Je maîtrise déjà les bases de ${subdomainName}.`,
     choices: ["Vrai", "Faux"],
     correctAnswer: "Vrai",
     explanationMd: "Auto-évaluation : il n'y a pas de bonne réponse universelle, elle t'aide à situer ton niveau ressenti.",
@@ -112,7 +113,7 @@ const FALLBACK_QUESTION_BUILDERS: Record<
   MCQ: (difficulty, subdomainName) => ({
     type: "MCQ",
     difficulty,
-    promptMd: `Parmi ces approches, laquelle correspond le mieux à un niveau ${difficulty}/5 en ${subdomainName} ?`,
+    promptMd: `Parmi ces approches, laquelle correspond le mieux à ton niveau actuel en ${subdomainName} ?`,
     choices: ["Approche débutante", "Approche intermédiaire", "Approche avancée", "Approche experte"],
     correctAnswer: "Approche intermédiaire",
     explanationMd: "Question générique de repli : il n'y a pas de correction fine possible sans clé Claude.",
@@ -122,7 +123,7 @@ const FALLBACK_QUESTION_BUILDERS: Record<
   OPEN: (difficulty, subdomainName, goalTitle) => ({
     type: "OPEN",
     difficulty,
-    promptMd: `Explique ce que tu sais déjà sur "${goalTitle}" (niveau de difficulté visé : ${difficulty}/5).`,
+    promptMd: `Explique ce que tu sais déjà sur "${goalTitle}".`,
     choices: null,
     correctAnswer: `Une réponse détaillée et concrète en lien avec ${subdomainName}.`,
     explanationMd: "Correction automatique indisponible sans clé Claude : réponse de référence générique.",
@@ -132,7 +133,7 @@ const FALLBACK_QUESTION_BUILDERS: Record<
   PRACTICAL: (difficulty, subdomainName) => ({
     type: "PRACTICAL",
     difficulty,
-    promptMd: `Décris comment tu t'y prendrais pour réaliser un exercice pratique de niveau ${difficulty}/5 en ${subdomainName}.`,
+    promptMd: `Décris comment tu t'y prendrais pour réaliser un exercice pratique en ${subdomainName}.`,
     choices: null,
     correctAnswer: `Une démarche concrète, étape par étape, adaptée à ${subdomainName}.`,
     explanationMd: "Correction automatique indisponible sans clé Claude : réponse de référence générique.",
@@ -142,7 +143,7 @@ const FALLBACK_QUESTION_BUILDERS: Record<
   CASE_STUDY: (difficulty, subdomainName, goalTitle) => ({
     type: "CASE_STUDY",
     difficulty,
-    promptMd: `Mise en situation (niveau ${difficulty}/5) : on te confie un projet lié à "${goalTitle}". Comment analyserais-tu la situation et par où commencerais-tu ?`,
+    promptMd: `Mise en situation : on te confie un projet lié à "${goalTitle}". Comment analyserais-tu la situation et par où commencerais-tu ?`,
     choices: null,
     correctAnswer: `Une analyse structurée du contexte de ${subdomainName} et un plan d'action priorisé.`,
     explanationMd: "Correction automatique indisponible sans clé Claude : réponse de référence générique.",
@@ -152,7 +153,7 @@ const FALLBACK_QUESTION_BUILDERS: Record<
   SCENARIO: (difficulty, subdomainName) => ({
     type: "SCENARIO",
     difficulty,
-    promptMd: `Scénario (niveau ${difficulty}/5) : face à une décision délicate en ${subdomainName}, quelle démarche adopterais-tu ?`,
+    promptMd: `Scénario : face à une décision délicate en ${subdomainName}, quelle démarche adopterais-tu ?`,
     choices: null,
     correctAnswer: `Une démarche de décision raisonnée, en lien avec les bonnes pratiques de ${subdomainName}.`,
     explanationMd: "Correction automatique indisponible sans clé Claude : réponse de référence générique.",
@@ -163,16 +164,21 @@ const FALLBACK_QUESTION_BUILDERS: Record<
 
 function buildFallbackQuestionPool(
   subdomainName: string,
-  goalTitle: string
+  goalTitle: string,
+  count: number
 ): z.infer<typeof GeneratedQuestion>[] {
   const types = Object.keys(FALLBACK_QUESTION_BUILDERS) as z.infer<typeof PoolQuestionType>[];
   const difficulties = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
 
-  return types.flatMap((type) =>
+  const full = types.flatMap((type) =>
     difficulties.map((difficulty) =>
       FALLBACK_QUESTION_BUILDERS[type](difficulty, subdomainName, goalTitle)
     )
   );
+
+  // Respecte le count demandé : sinon, un lot d'arrière-plan volontairement petit qui
+  // tombe en repli inonderait le pool de dizaines de doublons génériques.
+  return full.slice(0, Math.max(1, count));
 }
 
 const OpenAnswerGrading = z.object({

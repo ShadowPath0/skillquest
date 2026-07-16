@@ -179,6 +179,7 @@ model Answer {
   difficultyAtTime Float
   sequenceIndex    Int
   aiGradingJson    Json?
+  pendingGrading   Boolean  @default(false)
   createdAt        DateTime @default(now())
 
   testSession TestSession @relation(fields: [testSessionId], references: [id], onDelete: Cascade)

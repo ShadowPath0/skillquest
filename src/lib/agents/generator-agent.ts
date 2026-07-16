@@ -48,8 +48,9 @@ Pour chaque ressource : "title" (titre court) et "contentMd" (markdown avec une 
       throw new Error("La génération des ressources a échoué.");
     }
     contents = new Map(missingSkills.map((skill, i) => [skill, parsed.resources[i]]));
-  } catch {
+  } catch (err) {
     // No CLAUDE_API_URL/CLAUDE_API_TOKEN configured or the call failed: templated fallback.
+    console.error("generateResourcesForSkills: appel IA échoué, repli sur le contenu template.", err);
     contents = new Map(
       missingSkills.map((skill) => [
         skill,

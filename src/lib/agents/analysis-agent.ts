@@ -148,9 +148,10 @@ Consignes :
     strengths = parsed.strengths;
     weaknesses = parsed.weaknesses;
     explanationMd = parsed.explanationMd;
-  } catch {
+  } catch (err) {
     // No CLAUDE_API_URL/CLAUDE_API_TOKEN configured or the call failed: keep the
     // heuristic strengths/weaknesses/explanation computed above.
+    console.error("generateAiReport: appel IA échoué, repli sur l'analyse heuristique.", err);
   }
 
   const report = await prisma.aiReport.upsert({
