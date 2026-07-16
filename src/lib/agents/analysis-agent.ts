@@ -69,10 +69,18 @@ export async function generateAiReport(testSessionId: string) {
       skillTotals[tag].count += 1;
     }
   }
+  // L'IA génère des tags libres par question : sur 50 questions ça peut donner des
+  // dizaines de tags quasi uniques, illisibles sur un radar. On garde les tags les
+  // plus testés (les plus significatifs statistiquement), assez pour un radar lisible.
+  const MAX_RADAR_SKILLS = 12;
+  const topTags = Object.entries(skillTotals)
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, MAX_RADAR_SKILLS)
+    .map(([tag]) => tag);
   const radar = Object.fromEntries(
-    Object.entries(skillTotals).map(([tag, { sum, count }]) => [
+    topTags.map((tag) => [
       tag,
-      Math.round((sum / count) * 100),
+      Math.round((skillTotals[tag].sum / skillTotals[tag].count) * 100),
     ])
   );
 

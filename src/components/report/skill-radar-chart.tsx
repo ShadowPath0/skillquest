@@ -18,12 +18,16 @@ export function SkillRadarChart({ data }: { data: { skill: string; score: number
     );
   }
 
+  const MAX_LABEL_CHARS = 18;
+  const truncateLabel = (skill: string) =>
+    skill.length > MAX_LABEL_CHARS ? `${skill.slice(0, MAX_LABEL_CHARS - 1)}…` : skill;
+
   return (
-    <div className="h-72 w-full">
+    <div className="h-80 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <RadarChart data={data} outerRadius="75%">
+        <RadarChart data={data} outerRadius="65%">
           <PolarGrid />
-          <PolarAngleAxis dataKey="skill" tick={{ fontSize: 12 }} />
+          <PolarAngleAxis dataKey="skill" tickFormatter={truncateLabel} tick={{ fontSize: 11 }} />
           <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fontSize: 10 }} />
           <Radar
             name="Score"
