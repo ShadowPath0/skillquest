@@ -69,7 +69,7 @@ Chaque question doit avoir 1 à 3 "skillTags" courts et cohérents entre eux (ex
     // No CLAUDE_API_URL/CLAUDE_API_TOKEN configured or the call failed: fall back to a
     // small generic pool so a freeform domain never gets stuck without questions.
     console.error("generateQuestionPool: appel IA échoué, repli sur le pool générique.", err);
-    questions = buildFallbackQuestionPool(subdomainName, goalTitle, count);
+    questions = await buildFallbackQuestionPool(subdomainId, subdomainName, goalTitle, count);
     aiGenerated = false;
   }
 
@@ -162,11 +162,12 @@ const FALLBACK_QUESTION_BUILDERS: Record<
   }),
 };
 
-function buildFallbackQuestionPool(
+async function buildFallbackQuestionPool(
+  subdomainId: string,
   subdomainName: string,
   goalTitle: string,
   count: number
-): z.infer<typeof GeneratedQuestion>[] {
+): Promise<z.infer<typeof GeneratedQuestion>[]> {
   const types = Object.keys(FALLBACK_QUESTION_BUILDERS) as z.infer<typeof PoolQuestionType>[];
   const difficulties = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
 
@@ -176,9 +177,19 @@ function buildFallbackQuestionPool(
     )
   );
 
-  // Respecte le count demandé : sinon, un lot d'arrière-plan volontairement petit qui
-  // tombe en repli inonderait le pool de dizaines de doublons génériques.
-  return full.slice(0, Math.max(1, count));
+  // Le pool est généré en plusieurs lots séparés (voir ensureQuestionPool) : si deux
+  // lots tombent en repli pour le même sous-domaine, ce générateur est déterministe et
+  // renverrait sinon exactement le même contenu deux fois. On exclut ce qui a déjà été
+  // inséré pour ce sous-domaine afin que chaque lot en repli complète le précédent
+  // plutôt que de le dupliquer.
+  const existing = await prisma.question.findMany({
+    where: { subdomainId, aiGenerated: false },
+    select: { promptMd: true },
+  });
+  const usedPrompts = new Set(existing.map((q) => q.promptMd));
+  const remaining = full.filter((q) => !usedPrompts.has(q.promptMd));
+
+  return remaining.slice(0, Math.max(1, count));
 }
 
 const OpenAnswerGrading = z.object({
