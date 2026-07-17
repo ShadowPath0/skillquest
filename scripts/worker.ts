@@ -89,25 +89,35 @@ async function processJob(job: {
 async function loop() {
   console.log("Worker SkillQuest démarré, en attente de tâches...");
   while (true) {
-    const job = await prisma.generationJob.findFirst({
-      where: { status: "PENDING" },
-      orderBy: { createdAt: "asc" },
-    });
+    // Une connexion Prisma inactive peut être fermée par le pooler Supabase entre
+    // deux tâches (le worker est censé tourner 24/7 sans surveillance) : une erreur
+    // ici ne doit jamais arrêter la boucle, juste faire réessayer au tour suivant.
+    let job;
+    try {
+      job = await prisma.generationJob.findFirst({
+        where: { status: "PENDING" },
+        orderBy: { createdAt: "asc" },
+      });
+    } catch (err) {
+      console.error("Erreur en récupérant la prochaine tâche, nouvelle tentative bientôt.", err);
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+      continue;
+    }
 
     if (!job) {
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
       continue;
     }
 
-    await prisma.generationJob.update({
-      where: { id: job.id },
-      data: { status: "PROCESSING" },
-    });
-
-    console.log(`Traitement de la tâche ${job.id} (${job.type})...`);
-    const start = Date.now();
-
     try {
+      await prisma.generationJob.update({
+        where: { id: job.id },
+        data: { status: "PROCESSING" },
+      });
+
+      console.log(`Traitement de la tâche ${job.id} (${job.type})...`);
+      const start = Date.now();
+
       await processJob(job);
       await prisma.generationJob.update({
         where: { id: job.id },
@@ -117,15 +127,30 @@ async function loop() {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`Tâche ${job.id} échouée:`, err);
-      await prisma.generationJob.update({
-        where: { id: job.id },
-        data: { status: "FAILED", error: message },
-      });
+      try {
+        await prisma.generationJob.update({
+          where: { id: job.id },
+          data: { status: "FAILED", error: message },
+        });
+      } catch (updateErr) {
+        console.error(`Impossible de marquer la tâche ${job.id} comme échouée.`, updateErr);
+      }
     }
   }
 }
 
-loop().catch((err) => {
-  console.error("Le worker s'est arrêté sur une erreur fatale:", err);
-  process.exit(1);
-});
+// Filet de sécurité supplémentaire : si une erreur imprévue s'échappe malgré tout
+// de loop() (plutôt que de couper le process, ce qui exigerait un redémarrage
+// manuel), on relance la boucle après une courte pause.
+async function main() {
+  while (true) {
+    try {
+      await loop();
+    } catch (err) {
+      console.error("Erreur inattendue dans le worker, redémarrage dans 5s.", err);
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
+  }
+}
+
+main();
