@@ -67,7 +67,11 @@ export async function POST(request: NextRequest) {
           controller.enqueue(encoder.encode(full.slice(i, i + SIMULATED_CHUNK_SIZE)));
           await new Promise((resolve) => setTimeout(resolve, SIMULATED_CHUNK_DELAY_MS));
         }
-      } catch {
+      } catch (err) {
+        // Sans ce log, toute panne (mauvaise config, timeout, tunnel indisponible...)
+        // affiche le même message générique côté utilisateur, sans aucune trace côté
+        // serveur pour distinguer la vraie cause.
+        console.error("coach chat: appel IA échoué.", err);
         full = FALLBACK_MESSAGE;
         controller.enqueue(encoder.encode(full));
       } finally {
