@@ -5,25 +5,46 @@ type BadgeCriteria =
   | { type: "streak"; days: number }
   | { type: "test_score"; minScore: number }
   | { type: "program_week_completed"; weekNumber: number }
-  | { type: "program_completed" };
+  | { type: "program_completed" }
+  | { type: "final_exam_completed" }
+  | { type: "domains_explored"; count: number };
 
 export async function evaluateBadges(userId: string) {
-  const [badges, earnedBadges, profile, testCount, bestScore, completedWeek1, completedProgram] =
-    await Promise.all([
-      prisma.badge.findMany(),
-      prisma.userBadge.findMany({ where: { userId }, select: { badgeId: true } }),
-      prisma.profile.findUniqueOrThrow({ where: { id: userId } }),
-      prisma.testSession.count({ where: { userId, status: "COMPLETED" } }),
-      prisma.testSession.aggregate({
-        where: { userId, status: "COMPLETED" },
-        _max: { globalScore: true },
-      }),
-      prisma.programWeek.findFirst({
-        where: { weekNumber: 1, status: "completed", program: { userId } },
-      }),
-      prisma.weeklyProgram.findFirst({ where: { userId, status: "COMPLETED" } }),
-    ]);
+  const [
+    badges,
+    earnedBadges,
+    profile,
+    testCount,
+    bestScore,
+    completedWeeks,
+    completedProgram,
+    finalExamCompleted,
+    exploredDomains,
+  ] = await Promise.all([
+    prisma.badge.findMany(),
+    prisma.userBadge.findMany({ where: { userId }, select: { badgeId: true } }),
+    prisma.profile.findUniqueOrThrow({ where: { id: userId } }),
+    prisma.testSession.count({ where: { userId, status: "COMPLETED" } }),
+    prisma.testSession.aggregate({
+      where: { userId, status: "COMPLETED" },
+      _max: { globalScore: true },
+    }),
+    prisma.programWeek.findMany({
+      where: { status: "completed", program: { userId } },
+      select: { weekNumber: true },
+    }),
+    prisma.weeklyProgram.findFirst({ where: { userId, status: "COMPLETED" } }),
+    prisma.testSession.findFirst({
+      where: { userId, kind: "FINAL_EXAM", status: "COMPLETED" },
+    }),
+    prisma.userGoal.findMany({
+      where: { userId },
+      select: { domainId: true },
+      distinct: ["domainId"],
+    }),
+  ]);
 
+  const completedWeekNumbers = new Set(completedWeeks.map((w) => w.weekNumber));
   const earnedIds = new Set(earnedBadges.map((b) => b.badgeId));
   const newlyEarned: { id: string; name: string }[] = [];
 
@@ -44,10 +65,16 @@ export async function evaluateBadges(userId: string) {
         met = (bestScore._max.globalScore ?? 0) >= criteria.minScore;
         break;
       case "program_week_completed":
-        met = criteria.weekNumber === 1 && Boolean(completedWeek1);
+        met = completedWeekNumbers.has(criteria.weekNumber);
         break;
       case "program_completed":
         met = Boolean(completedProgram);
+        break;
+      case "final_exam_completed":
+        met = Boolean(finalExamCompleted);
+        break;
+      case "domains_explored":
+        met = exploredDomains.length >= criteria.count;
         break;
     }
 

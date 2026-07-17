@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Flame, Coins, Gem } from "lucide-react";
+import { Flame, Coins, Gem, Store, Crown } from "lucide-react";
 import { logout } from "@/lib/auth/actions";
 import { Button } from "@/components/ui/button";
 import { getEmblem } from "@/lib/character/emblems";
@@ -36,6 +36,20 @@ export function AppHeader({
           </Link>
           <Link href="/domains" className="text-muted-foreground hover:text-foreground">
             Quête
+          </Link>
+          <Link
+            href="/shop"
+            className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+          >
+            <Store className="size-4" />
+            Boutique
+          </Link>
+          <Link
+            href="/leaderboard"
+            className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+          >
+            <Crown className="size-4" />
+            Classement
           </Link>
         </nav>
       </div>
